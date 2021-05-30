@@ -151,6 +151,8 @@ module Hedgehog.Internal.Gen (
   , generate
   , toTree
   , toTreeMaybeT
+  , freezeTreeT
+  , replaceTreeT
   , fromTree
   , fromTreeT
   , fromTreeMaybeT
@@ -1433,16 +1435,24 @@ either_ genA genB =
 --
 list :: MonadGen m => Range Int -> m a -> m [a]
 list range gen =
-  let
-     interleave =
-       (interleaveTreeT . nodeValue =<<)
-  in
     sized $ \size ->
       ensure (atLeast $ Range.lowerBound size range) .
-      withGenT (mapGenT (TreeT . interleave . runTreeT)) $ do
+      replaceTreeT (TreeT . interleaveTreeT) $ do
         n <- integral_ range
-        replicateM n (toTreeMaybeT gen)
+        replicateM n (freezeTreeT gen)
 
+-- | Meant to be used in combination with freezeTree
+--
+-- - First freeze to get reified trees
+-- - Then you can safely use the GenT applicative to collect all trees that you want to combine
+-- - Use combinators to create a function which merges the trees
+-- - Use replacteTreeT to apply the function
+freezeTreeT :: MonadGen m => m a -> m (TreeT (MaybeT (GenBase m)) a)
+freezeTreeT = toTreeMaybeT
+replaceTreeT :: MonadGen m => (a -> TreeT (MaybeT (GenBase m)) b) -> m a -> m b
+replaceTreeT f = fromGenT . mapGenT (TreeT . inner . runTreeT) . toGenT
+  where
+    inner = (runTreeT . f . nodeValue =<<)
 interleaveTreeT :: Monad m => [TreeT m a] -> m (NodeT m [a])
 interleaveTreeT =
   fmap Tree.interleave . traverse runTreeT
